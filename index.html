@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dot Character</title>
+<style>
+  * { margin: 0; padding: 0; }
+  body { background: #1a1a2e; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── Dot Grid Helper ───
+// Draws a filled shape using a grid of dots
+function drawDotShape(cx, cy, radiusX, radiusY, dotRadius, dotSpacing, color, testFn) {
+  const dots = [];
+  for (let x = cx - radiusX - dotSpacing; x <= cx + radiusX + dotSpacing; x += dotSpacing) {
+    for (let y = cy - radiusY - dotSpacing; y <= cy + radiusY + dotSpacing; y += dotSpacing) {
+      const nx = (x - cx) / radiusX;
+      const ny = (y - cy) / radiusY;
+      if (testFn ? testFn(nx, ny) : (nx * nx + ny * ny <= 1)) {
+        dots.push({ x, y });
+      }
+    }
+  }
+  ctx.fillStyle = color;
+  for (const d of dots) {
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, dotRadius, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  return dots;
+}
+
+// ─── Character State ───
+const STATE = { IDLE: 0, WALK: 1, JUMP: 2, REACH: 3 };
+
+const char = {
+  x: canvas.width / 2,
+  y: canvas.height * 0.65,
+  baseY: canvas.height * 0.65,
+  vx: 0,
+  vy: 0,
+  state: STATE.IDLE,
+  stateTimer: 0,
+  bodyW: 55,
+  bodyH: 45,
+  squish: 0,       // vertical squish factor for jiggle
+  squishV: 0,
+  eyeBlink: 0,
+  eyeBlinkTimer: 0,
+  legPhase: 0,
+  // tentacle arm
+  armExtend: 0,    // 0..1
+  armTarget: { x: 0, y: 0 },
+  // walk direction
+  dir: 1,
+  // action queue
+  nextAction: 0,
+  nextActionTime: 0,
+  // dot visibility (0 = dense/filled, 1 = visible dots)
+  dotVisibility: 0,
+};
+
+function groundY() {
+  return canvas.height * 0.65;
+}
+
+// ─── AI / Behavior ───
+function pickNextAction(time) {
+  const r = Math.random();
+  if (r < 0.25) {
+    // idle
+    char.state = STATE.IDLE;
+    char.stateTimer = 0;
+    char.nextActionTime = time + 2000 + Math.random() * 3000;
+    char.vx = 0;
+  } else if (r < 0.6) {
+    // walk
+    char.state = STATE.WALK;
+    char.stateTimer = 0;
+    char.dir = Math.random() < 0.5 ? -1 : 1;
+    char.vx = char.dir * (1.2 + Math.random() * 1.5);
+    char.nextActionTime = time + 1500 + Math.random() * 3000;
+  } else if (r < 0.82) {
+    // jump
+    char.state = STATE.JUMP;
+    char.stateTimer = 0;
+    char.vy = -(8 + Math.random() * 4);
+    char.vx = (Math.random() - 0.5) * 3;
+    char.nextActionTime = time + 2000;
+  } else {
+    // reach with tentacle arm
+    char.state = STATE.REACH;
+    char.stateTimer = 0;
+    char.armExtend = 0;
+    char.armTarget = {
+      x: char.x + (Math.random() - 0.5) * 250,
+      y: char.y - 80 - Math.random() * 120,
+    };
+    char.nextActionTime = time + 2500 + Math.random() * 1500;
+  }
+}
+
+// ─── Update ───
+function update(time, dt) {
+  // Pick new action
+  if (time > char.nextActionTime) {
+    pickNextAction(time);
+  }
+
+  const base = groundY();
+  char.baseY = base;
+
+  // Eye blink
+  char.eyeBlinkTimer -= dt;
+  if (char.eyeBlinkTimer <= 0) {
+    char.eyeBlink = 1;
+    char.eyeBlinkTimer = 2000 + Math.random() * 4000;
+    setTimeout(() => { char.eyeBlink = 0; }, 120);
+  }
+
+  // Dot visibility target
+  let dotTarget = 0;
+  if (char.state === STATE.WALK || char.state === STATE.REACH) {
+    dotTarget = 1;
+  }
+  char.dotVisibility += (dotTarget - char.dotVisibility) * 0.08;
+
+  // Physics
+  switch (char.state) {
+    case STATE.IDLE:
+      char.vx *= 0.9;
+      // gentle breathing squish
+      char.squish = Math.sin(time * 0.003) * 0.04;
+      break;
+
+    case STATE.WALK:
+      char.legPhase += dt * 0.008 * Math.abs(char.vx);
+      // walking squish
+      char.squish = Math.sin(char.legPhase * 2) * 0.03;
+      break;
+
+    case STATE.JUMP:
+      char.vy += 0.35; // gravity
+      char.y += char.vy;
+      if (char.y >= base) {
+        char.y = base;
+        char.vy = 0;
+        // landing squish
+        char.squishV = 0.18;
+        char.state = STATE.IDLE;
+        char.nextActionTime = time + 800 + Math.random() * 1500;
+      }
+      break;
+
+    case STATE.REACH:
+      char.vx *= 0.92;
+      char.armExtend = Math.min(1, char.armExtend + dt * 0.002);
+      char.squish = Math.sin(time * 0.004) * 0.02;
+      if (char.armExtend >= 1 && char.stateTimer > 1200) {
+        char.armExtend = Math.max(0, char.armExtend - dt * 0.003);
+        if (char.armExtend <= 0.01) {
+          char.state = STATE.IDLE;
+          char.armExtend = 0;
+        }
+      }
+      break;
+  }
+
+  // Squish spring
+  char.squishV *= 0.88;
+  char.squish += char.squishV;
+  char.squishV -= char.squish * 0.15;
+
+  // Move
+  char.x += char.vx;
+
+  // Wrap around screen
+  if (char.x < -60) char.x = canvas.width + 60;
+  if (char.x > canvas.width + 60) char.x = -60;
+
+  // Keep on ground (except jumping)
+  if (char.state !== STATE.JUMP) {
+    char.y = base;
+  }
+
+  char.stateTimer += dt;
+}
+
+// ─── Draw ───
+function draw(time) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Ground
+  ctx.fillStyle = '#16213e';
+  ctx.fillRect(0, canvas.height * 0.72, canvas.width, canvas.height * 0.28);
+  // ground line
+  ctx.strokeStyle = '#0f3460';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, canvas.height * 0.72);
+  ctx.lineTo(canvas.width, canvas.height * 0.72);
+  ctx.stroke();
+
+  // Shadow
+  const shadowScale = 1 - (char.baseY - char.y) * 0.003;
+  ctx.save();
+  ctx.globalAlpha = 0.3 * Math.max(0.2, shadowScale);
+  ctx.fillStyle = '#000';
+  ctx.beginPath();
+  ctx.ellipse(char.x, char.baseY + char.bodyH * 0.7, char.bodyW * 0.7 * Math.max(0.3, shadowScale), 8 * Math.max(0.3, shadowScale), 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  const bx = char.x;
+  const by = char.y;
+  const bw = char.bodyW;
+  const bh = char.bodyH;
+  const sq = char.squish;
+
+  // Compute dot params based on visibility
+  // When dotVisibility=0: small spacing, large dots → looks solid
+  // When dotVisibility=1: larger spacing, smaller dots → dots visible
+  const dotSpacing = 4 + char.dotVisibility * 4;
+  const dotR = 2.2 - char.dotVisibility * 0.9;
+
+  // ─── Legs (only during walk) ───
+  if (char.state === STATE.WALK) {
+    const legH = 18;
+    const legW = 8;
+    const stride = 12;
+    for (let i = -1; i <= 1; i += 2) {
+      const phase = char.legPhase + (i === 1 ? Math.PI : 0);
+      const lx = bx + i * 14;
+      const ly = by + bh * 0.45;
+      const footX = lx + Math.sin(phase) * stride;
+      const footY = ly + legH - Math.abs(Math.sin(phase)) * 6;
+
+      // Draw leg as dot chain
+      const steps = 8;
+      ctx.fillStyle = '#e07020';
+      for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        const px = lx + (footX - lx) * t;
+        const py = ly + (footY - ly) * t;
+        ctx.beginPath();
+        ctx.arc(px, py, legW * 0.4 * (1 - t * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Foot
+      ctx.fillStyle = '#c06018';
+      ctx.beginPath();
+      ctx.arc(footX, footY, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // ─── Tentacle Arm ───
+  if (char.state === STATE.REACH && char.armExtend > 0.01) {
+    const startX = bx + char.dir * bw * 0.4;
+    const startY = by - bh * 0.1;
+    const endX = startX + (char.armTarget.x - startX) * char.armExtend;
+    const endY = startY + (char.armTarget.y - startY) * char.armExtend;
+    const ctrlX = (startX + endX) / 2 + Math.sin(time * 0.005) * 20;
+    const ctrlY = Math.min(startY, endY) - 40 - char.armExtend * 30;
+
+    // Draw tentacle as dots along bezier
+    const segments = Math.floor(20 * char.armExtend);
+    ctx.fillStyle = '#e07020';
+    for (let i = 0; i <= segments; i++) {
+      const t = i / Math.max(1, segments);
+      const px = (1 - t) * (1 - t) * startX + 2 * (1 - t) * t * ctrlX + t * t * endX;
+      const py = (1 - t) * (1 - t) * startY + 2 * (1 - t) * t * ctrlY + t * t * endY;
+      const thickness = 4 - t * 2.5;
+      const wobble = Math.sin(t * 10 + time * 0.006) * 2 * t;
+      ctx.beginPath();
+      ctx.arc(px + wobble, py, thickness, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // Tip
+    ctx.fillStyle = '#f09040';
+    ctx.beginPath();
+    ctx.arc(endX, endY, 4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ─── Body (manju shape) ───
+  const drawW = bw * (1 + sq * 0.5);
+  const drawH = bh * (1 - sq);
+
+  // Main body via dots
+  drawDotShape(bx, by, drawW, drawH, dotR, dotSpacing, '#f08030',
+    (nx, ny) => {
+      // Manju: flatter bottom, rounded top
+      const adjustedNy = ny - 0.15; // shift center up for manju shape
+      return nx * nx + adjustedNy * adjustedNy * 0.85 <= 1;
+    }
+  );
+
+  // Highlight dots (lighter orange on top)
+  drawDotShape(bx, by - drawH * 0.25, drawW * 0.7, drawH * 0.4, dotR * 0.7, dotSpacing * 1.2, '#f8a858',
+    (nx, ny) => nx * nx + ny * ny <= 1
+  );
+
+  // ─── Eye ───
+  const eyeX = bx + char.dir * 5;
+  const eyeY = by - drawH * 0.15;
+  const eyeW = 12;
+  const eyeH = char.eyeBlink ? 2 : 14;
+
+  // Eye white
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.ellipse(eyeX, eyeY, eyeW, eyeH, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (!char.eyeBlink) {
+    // Pupil - looks in movement direction
+    const pupilOffX = char.vx * 1.2;
+    const pupilOffY = char.state === STATE.JUMP ? -2 : 1;
+    ctx.fillStyle = '#1a1a2e';
+    ctx.beginPath();
+    ctx.arc(eyeX + pupilOffX, eyeY + pupilOffY, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eye shine
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(eyeX + pupilOffX + 2, eyeY + pupilOffY - 2, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // ─── Cheek (cute blush) ───
+  ctx.save();
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#ff6060';
+  ctx.beginPath();
+  ctx.ellipse(bx + char.dir * 25, by + 5, 8, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // ─── State indicator (small particles when active) ───
+  if (char.state === STATE.JUMP && char.vy < 0) {
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = `rgba(240, 160, 80, ${0.3 + Math.random() * 0.3})`;
+      ctx.beginPath();
+      ctx.arc(
+        bx + (Math.random() - 0.5) * bw,
+        by + bh * 0.5 + Math.random() * 15,
+        1 + Math.random() * 2,
+        0, Math.PI * 2
+      );
+      ctx.fill();
+    }
+  }
+}
+
+// ─── Main Loop ───
+let lastTime = 0;
+char.nextActionTime = 1000;
+
+function loop(timestamp) {
+  const dt = lastTime ? Math.min(timestamp - lastTime, 50) : 16;
+  lastTime = timestamp;
+
+  update(timestamp, dt);
+  draw(timestamp);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
