@@ -157,11 +157,13 @@ function update(time, dt) {
     case STATE.JUMP:
       char.vy += 0.35; // gravity
       char.y += char.vy;
+      // mid-air puyo-puyo wobble
+      char.squish = Math.sin(time * 0.015) * 0.12 + (char.vy < 0 ? -0.08 : 0.08);
       if (char.y >= base) {
         char.y = base;
         char.vy = 0;
-        // landing squish
-        char.squishV = 0.18;
+        // big landing squish
+        char.squishV = 0.35;
         char.state = STATE.IDLE;
         char.nextActionTime = time + 800 + Math.random() * 1500;
       }
@@ -181,10 +183,10 @@ function update(time, dt) {
       break;
   }
 
-  // Squish spring
-  char.squishV *= 0.88;
+  // Squish spring (softer, more bouncy)
+  char.squishV *= 0.92;
   char.squish += char.squishV;
-  char.squishV -= char.squish * 0.15;
+  char.squishV -= char.squish * 0.1;
 
   // Move
   char.x += char.vx;
@@ -197,6 +199,11 @@ function update(time, dt) {
   if (char.state !== STATE.JUMP) {
     char.y = base;
   }
+
+  // Leg lift: smoothly raise body when legs appear
+  let legLiftTarget = (char.state === STATE.WALK) ? 22 : 0;
+  char.legLift = char.legLift || 0;
+  char.legLift += (legLiftTarget - char.legLift) * 0.08;
 
   char.stateTimer += dt;
 }
@@ -227,28 +234,28 @@ function draw(time) {
   ctx.restore();
 
   const bx = char.x;
-  const by = char.y;
+  const by = char.y - (char.legLift || 0);
   const bw = char.bodyW;
   const bh = char.bodyH;
   const sq = char.squish;
 
   // Compute dot params based on visibility
-  // When dotVisibility=0: small spacing, large dots → looks solid
-  // When dotVisibility=1: larger spacing, smaller dots → dots visible
-  const dotSpacing = 4 + char.dotVisibility * 4;
-  const dotR = 2.2 - char.dotVisibility * 0.9;
+  // When dotVisibility=0: large dots overlapping → looks solid
+  // When dotVisibility=1: dots spread apart → individual dots visible
+  const dotSpacing = 8 + char.dotVisibility * 6;
+  const dotR = 5.5 - char.dotVisibility * 2.0;
 
   // ─── Legs (only during walk) ───
-  if (char.state === STATE.WALK) {
-    const legH = 18;
+  if (char.state === STATE.WALK || (char.legLift || 0) > 1) {
+    const groundLevel = char.y + bh * 0.45;
     const legW = 8;
-    const stride = 12;
+    const stride = 14;
     for (let i = -1; i <= 1; i += 2) {
       const phase = char.legPhase + (i === 1 ? Math.PI : 0);
       const lx = bx + i * 14;
-      const ly = by + bh * 0.45;
+      const ly = by + bh * 0.4;
       const footX = lx + Math.sin(phase) * stride;
-      const footY = ly + legH - Math.abs(Math.sin(phase)) * 6;
+      const footY = groundLevel + 4 - Math.abs(Math.sin(phase)) * 8;
 
       // Draw leg as dot chain
       const steps = 8;
