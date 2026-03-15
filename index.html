@@ -24,7 +24,7 @@ resize();
 window.addEventListener('resize', resize);
 
 // ─── Character State ───
-const STATE = { IDLE: 0, WALK: 1, JUMP: 2 };
+const STATE = { IDLE: 0, WALK: 1, JUMP_PREP: 2, JUMP: 3, LANDING: 4 };
 
 const char = {
   x: 0, y: 0, baseY: 0,
@@ -35,9 +35,11 @@ const char = {
   legPhase: 0,
   dir: 1,
   nextActionTime: 0,
-  crouch: 0,     // landing knee-bend amount
+  crouch: 0,     // knee-bend amount (positive = crouching)
   crouchV: 0,    // crouch velocity (spring)
   walkBlend: 0,  // smooth walk transition
+  jellyV: 0,     // jelly vertical velocity for body deformation
+  jellyD: 0,     // jelly deformation amount
 };
 
 function initChar() {
@@ -66,11 +68,12 @@ function pickNextAction(time) {
     char.vx = char.dir * (1.0 + Math.random() * 1.2);
     char.nextActionTime = time + 1500 + Math.random() * 3000;
   } else {
-    char.state = STATE.JUMP;
+    char.state = STATE.JUMP_PREP;
     char.stateTimer = 0;
-    char.vy = -(7 + Math.random() * 3);
-    char.vx = (Math.random() - 0.5) * 2.5;
-    char.nextActionTime = time + 2000;
+    char.crouch = 0;
+    char.crouchV = 0;
+    char.vx *= 0.3;
+    char.nextActionTime = time + 3000;  // will be overridden by jump launch
   }
 }
 
@@ -94,35 +97,77 @@ function update(time, dt) {
       char.vx *= 0.9;
       break;
     case STATE.WALK:
-      // Phase speed tuned so stance foot matches ground speed
       char.legPhase += dt * 0.01 * Math.abs(char.vx);
+      break;
+    case STATE.JUMP_PREP:
+      // Squat down over ~300ms then launch
+      char.crouch += (12 - char.crouch) * 0.12;
+      char.vx *= 0.95;
+      if (char.stateTimer > 300) {
+        char.state = STATE.JUMP;
+        char.stateTimer = 0;
+        char.vy = -(8 + Math.random() * 3);
+        char.vx = (Math.random() - 0.5) * 2.5;
+        char.crouch = -6;  // negative = stretch on launch
+        char.crouchV = -3;
+      }
       break;
     case STATE.JUMP:
       char.vy += 0.32;
       char.y += char.vy;
+      // Slowly relax crouch toward 0 in air (legs extended)
+      char.crouch += (0 - char.crouch) * 0.08;
       if (char.y >= base) {
         char.y = base;
+        const impactV = char.vy;
         char.vy = 0;
-        char.crouchV = 5;  // landing impact → knees absorb
-        char.state = STATE.IDLE;
-        char.nextActionTime = time + 800 + Math.random() * 1500;
+        char.crouch = 0;
+        char.crouchV = impactV * 1.2;  // landing impact proportional to fall speed
+        char.jellyV = impactV * 0.8;   // jelly squash on landing
+        char.state = STATE.LANDING;
+        char.stateTimer = 0;
       }
+      break;
+    case STATE.LANDING:
+      // Stay in landing until crouch spring settles
+      if (char.stateTimer > 400 && Math.abs(char.crouch) < 1 && Math.abs(char.crouchV) < 1) {
+        char.state = STATE.IDLE;
+        char.nextActionTime = time + 500 + Math.random() * 1500;
+      }
+      char.vx *= 0.92;
       break;
   }
 
-  // Crouch spring (landing knee absorption)
-  char.crouchV -= char.crouch * 0.2;
-  char.crouchV *= 0.82;
-  char.crouch += char.crouchV;
-  if (Math.abs(char.crouch) < 0.3 && Math.abs(char.crouchV) < 0.3) {
-    char.crouch = 0; char.crouchV = 0;
+  // Crouch spring (used by jump prep, landing, walk bob)
+  if (char.state !== STATE.JUMP_PREP) {
+    char.crouchV -= char.crouch * 0.2;
+    char.crouchV *= 0.82;
+    char.crouch += char.crouchV;
+    if (Math.abs(char.crouch) < 0.2 && Math.abs(char.crouchV) < 0.2 && char.state !== STATE.LANDING) {
+      char.crouch = 0; char.crouchV = 0;
+    }
+  }
+
+  // Feed walk bob into jelly
+  if (char.state === STATE.WALK) {
+    const bobAccel = -char.walkBlend * Math.sin(char.legPhase * 2) * 0.15 * Math.abs(char.vx);
+    char.jellyV += bobAccel;
+  }
+
+  // Jelly spring (body deformation)
+  char.jellyV -= char.jellyD * 0.25;
+  char.jellyV *= 0.78;
+  char.jellyD += char.jellyV;
+  if (Math.abs(char.jellyD) < 0.1 && Math.abs(char.jellyV) < 0.1) {
+    char.jellyD = 0; char.jellyV = 0;
   }
 
   // Walk blend (smooth in, snap out)
   if (char.state === STATE.WALK) {
     char.walkBlend += (1 - char.walkBlend) * 0.08;
   } else {
-    char.walkBlend = 0;
+    char.walkBlend *= 0.85;
+    if (char.walkBlend < 0.01) char.walkBlend = 0;
   }
 
   char.x += char.vx;
@@ -137,6 +182,8 @@ function update(time, dt) {
     char.dir = -1;
   }
   if (char.state !== STATE.JUMP) char.y = base;
+  // Prevent drifting during landing
+  if (char.state === STATE.LANDING) char.vx *= 0.95;
 
   char.stateTimer += dt;
 }
@@ -161,18 +208,20 @@ function draw(time) {
   const ground = char.y;
   const wb = char.walkBlend;
 
-  // Body ellipse
-  const crouch = Math.max(0, char.crouch);
-  const squash = crouch * 0.006;
-  const bodyRx = 44 * (1 + squash);
-  const bodyRy = 34 * (1 - squash * 0.5);
+  // Body ellipse with jelly deformation
+  // Positive squash = wider+shorter, negative = taller+narrower
+  const squashAmt = char.crouch * 0.006 + char.jellyD * 0.008;
+  const bodyRx = 44 * (1 + squashAmt);
+  const bodyRy = 34 * (1 - squashAmt * 0.7);
 
-  // Standing leg height (nearly straight when idle)
+  // Standing leg height
   const standH = L * 1.96;
 
-  // Human walk bob: body drops at contact, rises at mid-stance
-  const walkDrop = wb * Math.cos(char.legPhase * 2) * 1.5;
-  const hipY = ground - standH + crouch + walkDrop;
+  // Walk bob: body drops at contact, rises at mid-stance (bigger amplitude)
+  const walkBob = wb * Math.cos(char.legPhase * 2) * 3.5;
+
+  const crouchOffset = Math.max(0, char.crouch);
+  const hipY = ground - standH + crouchOffset + walkBob;
   const bodyY = hipY - bodyRy + 5;
 
   // ─── Legs (3 dots each, 2-bone IK, knees always outward) ───
@@ -184,10 +233,19 @@ function draw(time) {
     const hy = hipY;
     let fx, fy;
 
-    if (char.state === STATE.JUMP) {
-      const tuck = char.vy < 0 ? Math.abs(char.vy) * 0.3 : 0;
+    if (char.state === STATE.JUMP_PREP) {
+      // Crouching: feet on ground, knees bent outward
+      fx = hx + side * 4;
+      fy = ground;
+    } else if (char.state === STATE.JUMP) {
+      // Airborne: legs stretched straight down, extended longer
+      const stretch = 1.0 + 0.25 * Math.max(0, -char.vy / 10);  // stretch more on upward
       fx = hx;
-      fy = hy + L * 1.9 - tuck;
+      fy = hy + L * 2.1 * stretch;
+    } else if (char.state === STATE.LANDING) {
+      // Landing: feet on ground, knees bent for absorption
+      fx = hx + side * 3;
+      fy = ground;
     } else if (wb < 0.01) {
       // Idle: legs perfectly straight down
       fx = hx;
@@ -216,7 +274,11 @@ function draw(time) {
     const d = Math.min(dist, L * 2 - 0.1);
 
     let kx, ky;
-    if (wb < 0.01 && char.state !== STATE.JUMP) {
+    if (char.state === STATE.JUMP) {
+      // Airborne: legs straight, knee is midpoint
+      kx = (hx + fx) / 2;
+      ky = (hy + fy) / 2;
+    } else if (wb < 0.01 && char.state === STATE.IDLE) {
       // Idle: perfectly straight legs — knee is midpoint
       kx = (hx + fx) / 2;
       ky = (hy + fy) / 2;
