@@ -126,8 +126,16 @@ function update(time, dt) {
   }
 
   char.x += char.vx;
-  if (char.x < -100) char.x = canvas.width + 100;
-  if (char.x > canvas.width + 100) char.x = -100;
+  const margin = 50; // body radius + padding
+  if (char.x < margin) {
+    char.x = margin;
+    char.vx = Math.abs(char.vx);
+    char.dir = 1;
+  } else if (char.x > canvas.width - margin) {
+    char.x = canvas.width - margin;
+    char.vx = -Math.abs(char.vx);
+    char.dir = -1;
+  }
   if (char.state !== STATE.JUMP) char.y = base;
 
   char.stateTimer += dt;
