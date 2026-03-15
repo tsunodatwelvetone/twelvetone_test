@@ -94,7 +94,8 @@ function update(time, dt) {
       char.vx *= 0.9;
       break;
     case STATE.WALK:
-      char.legPhase += dt * 0.005 * Math.abs(char.vx);
+      // Phase speed tuned so stance foot matches ground speed
+      char.legPhase += dt * 0.01 * Math.abs(char.vx);
       break;
     case STATE.JUMP:
       char.vy += 0.32;
@@ -140,26 +141,31 @@ function dot(x, y, r, color) {
 function draw(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const R = 13;          // uniform dot radius (body & legs)
+  const R = 8;            // smaller dots → more dots → rounder body
   const ORANGE = '#f07820';
-  const L = 20;          // leg segment length (hip→knee, knee→foot)
+  const L = 12;           // short leg segments (game character proportions)
 
   const bx = char.x;
   const ground = char.y;
   const crouch = Math.max(0, char.crouch);
 
-  // Body ellipse (1.3:1 ratio)
-  const bodyRx = 50;
-  const bodyRy = 38;
+  // Body ellipse (rounder game-character shape)
+  const squash = crouch * 0.008;
+  const bodyRx = 42 * (1 + squash);       // wider on landing squash
+  const bodyRy = 34 * (1 - squash * 0.6); // shorter on landing squash
 
-  // Hip sits near body bottom; legs hang below
-  const standH = L * 1.9;
+  // Hip near body bottom; short legs below
+  const standH = L * 1.85;
   const hipY = ground - standH + crouch;
-  const bodyY = hipY - bodyRy + 8;
+
+  // Body bob during walk
+  const wb = char.walkBlend;
+  const bob = wb * Math.abs(Math.sin(char.legPhase)) * 2;
+  const bodyY = hipY - bodyRy + 6 - bob;
 
   // ─── Legs (3 dots each, 2-bone IK with knee) ───
-  const hipSpacing = 12;
-  const wb = char.walkBlend;
+  const hipSpacing = 10;
+  const stanceLen = 9;  // tuned to match ground speed
 
   for (let side = -1; side <= 1; side += 2) {
     const hx = bx + side * hipSpacing;
@@ -167,17 +173,36 @@ function draw(time) {
     let fx, fy;
 
     if (char.state === STATE.JUMP) {
-      fx = hx + char.vx * 1.5;
-      fy = hy + L * 1.85;
+      // Tuck legs when ascending, extend when falling
+      const tuck = char.vy < 0 ? Math.abs(char.vy) * 0.3 : 0;
+      fx = hx;
+      fy = hy + L * 1.8 - tuck;
     } else {
+      // Piecewise walk: swing (in air) + stance (on ground)
       const phase = char.legPhase + (side === 1 ? Math.PI : 0);
-      const stride = Math.sin(phase) * 15 * wb;
-      const lift = Math.max(0, Math.sin(phase)) * 12 * wb;
-      fx = hx + stride;
-      fy = ground - lift;
+      const p = ((phase % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+
+      if (wb < 0.01) {
+        // Idle: feet straight down
+        fx = hx;
+        fy = ground;
+      } else if (p < Math.PI) {
+        // Swing phase: foot lifts and arcs forward
+        const t = p / Math.PI;
+        const swingX = (-stanceLen + t * 2 * stanceLen) * wb;
+        const swingY = Math.sin(t * Math.PI) * 8 * wb;
+        fx = hx + swingX;
+        fy = ground - swingY;
+      } else {
+        // Stance phase: foot on ground, slides backward (matches body movement)
+        const t = (p - Math.PI) / Math.PI;
+        const stanceX = (stanceLen - t * 2 * stanceLen) * wb;
+        fx = hx + stanceX;
+        fy = ground;
+      }
     }
 
-    // 2-bone IK
+    // 2-bone IK for knee
     const dx = fx - hx, dy = fy - hy;
     const dist = Math.sqrt(dx * dx + dy * dy);
     const d = Math.min(dist, L * 2 - 0.1);
@@ -190,6 +215,7 @@ function draw(time) {
       const cosA = Math.max(-1, Math.min(1, d / (2 * L)));
       const a = Math.acos(cosA);
       const baseAng = Math.atan2(dy, dx);
+      // Walk: bend knees forward; idle/landing: bend outward
       const bendDir = wb > 0.5 ? char.dir : -side;
       const kneeAng = baseAng - bendDir * a;
       kx = hx + Math.cos(kneeAng) * L;
@@ -201,8 +227,8 @@ function draw(time) {
     dot(fx, fy, R, ORANGE);
   }
 
-  // ─── Body (hex-packed ellipse, opaque, drawn OVER leg tops) ───
-  const step = R * 1.2;
+  // ─── Body (hex-packed, dense, opaque — drawn OVER leg tops) ───
+  const step = R * 1.25;
   const maxRow = Math.ceil(bodyRy / step);
   const maxCol = Math.ceil(bodyRx / step);
 
@@ -217,17 +243,18 @@ function draw(time) {
     }
   }
 
-  // ─── Eye ───
-  const eyeX = bx + char.dir * 3;
-  const eyeY = bodyY;
+  // ─── Eye (upper-front of body, game-character style) ───
+  const eyeX = bx + char.dir * bodyRx * 0.18;
+  const eyeY = bodyY - bodyRy * 0.12;
 
   if (char.eyeBlink) {
-    dot(eyeX, eyeY, R * 0.5, '#fff');
+    // Thin line blink
+    dot(eyeX, eyeY, R * 0.6, '#fff');
   } else {
-    dot(eyeX, eyeY, R * 1.5, '#fff');    // white (large)
-    const px = char.vx * 0.8;
+    dot(eyeX, eyeY, R * 2.0, '#fff');    // big white (game character big eye)
+    const px = char.vx * 0.6;
     const py = char.state === STATE.JUMP ? -1 : 0;
-    dot(eyeX + px, eyeY + py, R * 0.6, '#000'); // pupil (small)
+    dot(eyeX + px, eyeY + py, R * 1.0, '#000'); // pupil
   }
 }
 
