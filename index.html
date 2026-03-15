@@ -245,7 +245,7 @@ function draw(time) {
       fy = hy + L * 2.1 * stretch;
     } else if (char.state === STATE.LANDING) {
       // Landing: feet on ground, knees bent for absorption
-      fx = hx + side * 3;
+      fx = hx + side * stanceLen;
       fy = ground;
     } else if (wb < 0.01) {
       // Idle: legs straight down, same spacing as walk stance
