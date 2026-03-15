@@ -95,6 +95,7 @@ function update(time, dt) {
   switch (char.state) {
     case STATE.IDLE:
       char.vx *= 0.9;
+      char.legPhase = 0;  // reset leg phase so legs are straight
       break;
     case STATE.WALK:
       char.legPhase += dt * 0.01 * Math.abs(char.vx);
@@ -130,8 +131,9 @@ function update(time, dt) {
       break;
     case STATE.LANDING:
       // Stay in landing until crouch spring settles
-      if (char.stateTimer > 400 && Math.abs(char.crouch) < 1 && Math.abs(char.crouchV) < 1) {
+      if (char.stateTimer > 300 && Math.abs(char.crouch) < 2 && Math.abs(char.crouchV) < 2) {
         char.state = STATE.IDLE;
+        char.crouch = 0; char.crouchV = 0;  // snap legs straight immediately
         char.nextActionTime = time + 500 + Math.random() * 1500;
       }
       char.vx *= 0.92;
@@ -166,8 +168,7 @@ function update(time, dt) {
   if (char.state === STATE.WALK) {
     char.walkBlend += (1 - char.walkBlend) * 0.08;
   } else {
-    char.walkBlend *= 0.85;
-    if (char.walkBlend < 0.01) char.walkBlend = 0;
+    char.walkBlend = 0;  // snap legs straight immediately on stop
   }
 
   char.x += char.vx;
@@ -200,7 +201,7 @@ function draw(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const R = 7;            // leg dot radius
-  const BR = 10;          // body dot radius (larger for fewer, bolder dots)
+  const BR = 14;          // body dot radius (big bold dots)
   const ORANGE = '#f07820';
   const L = 11;           // short leg segments (cute game proportions)
 
@@ -301,7 +302,7 @@ function draw(time) {
   }
 
   // ─── Body (concentric elliptical rings — perfectly round outline) ───
-  const ringGap = BR * 0.85;
+  const ringGap = BR * 1.0;
   const numRings = Math.ceil(Math.min(bodyRx, bodyRy) / ringGap);
 
   for (let i = numRings; i >= 0; i--) {
@@ -313,7 +314,7 @@ function draw(time) {
       dot(bx, bodyY, BR, ORANGE);
     } else {
       const circ = 2 * Math.PI * Math.max(rx, ry);
-      const n = Math.max(1, Math.round(circ / (BR * 1.3)));
+      const n = Math.max(1, Math.round(circ / (BR * 1.5)));
       const angOff = (i % 2 === 0) ? 0 : Math.PI / n;
       for (let j = 0; j < n; j++) {
         const a = (Math.PI * 2 * j) / n + angOff;
