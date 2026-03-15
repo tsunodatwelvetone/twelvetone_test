@@ -248,8 +248,8 @@ function draw(time) {
       fx = hx + side * 3;
       fy = ground;
     } else if (wb < 0.01) {
-      // Idle: legs perfectly straight down
-      fx = hx;
+      // Idle: legs straight down, same spacing as walk stance
+      fx = hx + side * stanceLen;
       fy = ground;
     } else {
       // Walk: swing/stance phases, stride follows travel direction
