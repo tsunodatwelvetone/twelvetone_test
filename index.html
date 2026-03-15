@@ -158,60 +158,59 @@ function dot(x, y, r, color) {
 function draw(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const bx = char.x;
-  const by = char.y - (char.legLift || 0);
   const sq = char.squish;
-
   const sw = char.bodyW * (1 + sq * 0.5);
   const sh = char.bodyH * (1 - sq);
 
-  const R = 11;       // standard dot radius (all dots except eye white)
-  const D = R * 1.7;  // spacing between dot centers
+  const R = 10;  // uniform dot size for ALL dots (except eye white)
   const ORANGE = '#f07820';
 
-  // ─── Legs: 6 dots (3 per leg) ───
-  const legSpacing = sw * 0.2;
+  const bx = char.x;
+  // Body center is lifted up so legs hang below
+  const by = char.y - (char.legLift || 0) - 35;
+
+  // ─── Legs first (behind body): 3 dots per leg ───
+  const legSpacing = 10;
+  const legStep = R * 1.5;
+  const legTop = by + sh * 0.55;  // starts at body bottom area
+
   for (let side = -1; side <= 1; side += 2) {
-    const legX = bx + side * legSpacing;
-    const legTopY = by + sh * 0.3;
+    const lx = bx + side * legSpacing;
     let fxOff = 0, kickUp = 0;
     if (char.state === STATE.WALK) {
       const phase = char.legPhase + (side === 1 ? Math.PI : 0);
-      fxOff = Math.sin(phase) * 6;
-      kickUp = Math.abs(Math.sin(phase)) * 6;
+      fxOff = Math.sin(phase) * 5;
+      kickUp = Math.abs(Math.sin(phase)) * 5;
     }
-    dot(legX, legTopY + 4, R, ORANGE);
-    dot(legX + fxOff * 0.5, legTopY + 4 + D, R, ORANGE);
-    dot(legX + fxOff, legTopY + 4 + D * 2 - kickUp, R, ORANGE);
+    dot(lx, legTop + legStep, R, ORANGE);
+    dot(lx + fxOff * 0.5, legTop + legStep * 2, R, ORANGE);
+    dot(lx + fxOff, legTop + legStep * 3 - kickUp, R, ORANGE);
   }
 
-  // ─── Body: oval of uniform dots (1.3:1 ratio) ───
+  // ─── Body: filled oval (1.3:1 ratio) ───
   // Outer ring (12 dots)
   for (let i = 0; i < 12; i++) {
     const a = (Math.PI * 2 * i) / 12;
-    dot(bx + Math.cos(a) * sw * 0.62, by + Math.sin(a) * sh * 0.55, R, ORANGE);
+    dot(bx + Math.cos(a) * sw * 0.6, by + Math.sin(a) * sh * 0.5, R, ORANGE);
   }
   // Inner ring (6 dots)
   for (let i = 0; i < 6; i++) {
-    const a = (Math.PI * 2 * i) / 6 + 0.3;
-    dot(bx + Math.cos(a) * sw * 0.28, by + Math.sin(a) * sh * 0.25, R, ORANGE);
+    const a = (Math.PI * 2 * i) / 6 + 0.5;
+    dot(bx + Math.cos(a) * sw * 0.26, by + Math.sin(a) * sh * 0.22, R, ORANGE);
   }
   // Center (1 dot)
   dot(bx, by, R, ORANGE);
 
-  // ─── Eye ───
-  const eyeX = bx + char.dir * 3;
-  const eyeY = by - sh * 0.02;
+  // ─── Eye: 1 large white dot + 1 standard black dot ───
+  const eyeX = bx + char.dir * 2;
+  const eyeY = by;
 
   if (char.eyeBlink) {
-    // Blink: just the white squished flat
     dot(eyeX, eyeY, R, '#fff');
   } else {
-    // Eye white: 1 large dot
-    dot(eyeX, eyeY, R * 1.6, '#fff');
-    // Pupil: 1 standard-size dot (black)
-    const px = char.vx * 1.2;
-    const py = char.state === STATE.JUMP ? -2 : 0.5;
+    dot(eyeX, eyeY, R * 1.5, '#fff');
+    const px = char.vx * 1.0;
+    const py = char.state === STATE.JUMP ? -1 : 0;
     dot(eyeX + px, eyeY + py, R, '#000');
   }
 }
