@@ -97,8 +97,8 @@ function startScatter(time) {
       tx: t.x - char.x, ty: t.y - char.y,
       onGround: false,
       eye: t.eye || null,
+      part: t.part || (t.eye ? 'eye' : 'body'),
       parentIdx: -1,  // for pupil → follows white eye
-      // Reassemble: each particle gets a random delay and launch time
       reassembleDelay: 0,
       reassemblePhase: 0, // 0=waiting, 1=bouncing toward target
       bounceVx: 0, bounceVy: 0,
@@ -196,9 +196,9 @@ function computeDotTargets() {
       const kneeAng = baseAng - side * a;
       kx = hx + Math.cos(kneeAng) * L; ky = hy + Math.sin(kneeAng) * L;
     }
-    dots.push({ x: hx, y: hy, r: R, color: ORANGE });
-    dots.push({ x: kx, y: ky, r: R, color: ORANGE });
-    dots.push({ x: fx, y: fy, r: R, color: ORANGE });
+    dots.push({ x: hx, y: hy, r: R, color: ORANGE, part: 'leg' });
+    dots.push({ x: kx, y: ky, r: R, color: ORANGE, part: 'leg' });
+    dots.push({ x: fx, y: fy, r: R, color: ORANGE, part: 'leg' });
   }
 
   // Body
@@ -209,14 +209,14 @@ function computeDotTargets() {
     const rx = bodyRx * scale;
     const ry = bodyRy * scale;
     if (rx < 1 && ry < 1) {
-      dots.push({ x: bx, y: bodyY, r: BR, color: ORANGE });
+      dots.push({ x: bx, y: bodyY, r: BR, color: ORANGE, part: 'body' });
     } else {
       const circ = 2 * Math.PI * Math.max(rx, ry);
       const n = Math.max(1, Math.round(circ / (BR * 1.5)));
       const angOff = (i % 2 === 0) ? 0 : Math.PI / n;
       for (let j = 0; j < n; j++) {
         const a = (Math.PI * 2 * j) / n + angOff;
-        dots.push({ x: bx + Math.cos(a) * rx, y: bodyY + Math.sin(a) * ry, r: BR, color: ORANGE });
+        dots.push({ x: bx + Math.cos(a) * rx, y: bodyY + Math.sin(a) * ry, r: BR, color: ORANGE, part: 'body' });
       }
     }
   }
@@ -269,8 +269,11 @@ function update(time, dt) {
       const targets = computeDotTargets();
       for (let i = 0; i < particles.length && i < targets.length; i++) {
         const p = particles[i];
-        // Random delay so they don't all bounce at once
-        p.reassembleDelay = Math.random() * 800;
+        // Staggered by part: legs first, body next, eye last
+        const baseDelay = p.part === 'leg' ? 0
+                        : p.part === 'body' ? 600
+                        : 1400;  // eye
+        p.reassembleDelay = baseDelay + Math.random() * 400;
         p.reassemblePhase = 0;
         p.onGround = false;
       }
@@ -354,7 +357,7 @@ function update(time, dt) {
       if (p.reassemblePhase < 2) allDone = false;
     }
 
-    if (allDone || scatterTimer > 3000) {
+    if (allDone || scatterTimer > 4500) {
       char.state = STATE.IDLE;
       char.stateTimer = 0;
       char.nextActionTime = time + 1000 + Math.random() * 2000;
