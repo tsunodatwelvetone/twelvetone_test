@@ -118,9 +118,12 @@ function update(time, dt) {
     char.crouch = 0; char.crouchV = 0;
   }
 
-  // Walk blend (smooth in/out)
-  const wTarget = char.state === STATE.WALK ? 1 : 0;
-  char.walkBlend += (wTarget - char.walkBlend) * 0.08;
+  // Walk blend (smooth in, snap out)
+  if (char.state === STATE.WALK) {
+    char.walkBlend += (1 - char.walkBlend) * 0.08;
+  } else {
+    char.walkBlend = 0;
+  }
 
   char.x += char.vx;
   if (char.x < -100) char.x = canvas.width + 100;
