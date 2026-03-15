@@ -87,20 +87,38 @@ function pickNextAction(time) {
 }
 
 function startScatter(time) {
-  // Compute current dot targets so we know how many particles
   const targets = computeDotTargets();
-  particles = targets.map(t => ({
-    // Current position = target position at scatter start
-    x: t.x, y: t.y, r: t.r, color: t.color,
-    // Velocities: burst outward + some upward
-    vx: (Math.random() - 0.5) * 8 + (t.x - char.x) * 0.08,
-    vy: -(2 + Math.random() * 5),
-    // Target to return to (relative to char position at reassemble time)
-    tx: t.x - char.x, ty: t.y - char.y,
-    onGround: false,
-    rotation: 0,
-    rotSpeed: (Math.random() - 0.5) * 0.3,
-  }));
+  let eyeWhiteIdx = -1;
+  particles = targets.map((t, idx) => {
+    const p = {
+      x: t.x, y: t.y, r: t.r, color: t.color,
+      vx: (Math.random() - 0.5) * 8 + (t.x - char.x) * 0.08,
+      vy: -(2 + Math.random() * 5),
+      tx: t.x - char.x, ty: t.y - char.y,
+      onGround: false,
+      eye: t.eye || null,
+      parentIdx: -1,  // for pupil → follows white eye
+      // Reassemble: each particle gets a random delay and launch time
+      reassembleDelay: 0,
+      reassemblePhase: 0, // 0=waiting, 1=bouncing toward target
+      bounceVx: 0, bounceVy: 0,
+    };
+    if (t.eye === 'white') eyeWhiteIdx = idx;
+    if (t.eye === 'pupil') p.parentIdx = -2;  // placeholder, set below
+    return p;
+  });
+  // Link pupil to white eye
+  for (const p of particles) {
+    if (p.parentIdx === -2) p.parentIdx = eyeWhiteIdx;
+  }
+  // Pupil gets no independent velocity
+  if (eyeWhiteIdx >= 0) {
+    for (const p of particles) {
+      if (p.eye === 'pupil' && p.parentIdx >= 0) {
+        p.vx = 0; p.vy = 0;
+      }
+    }
+  }
   char.state = STATE.SCATTER;
   char.stateTimer = 0;
   char.vx = 0;
@@ -203,11 +221,11 @@ function computeDotTargets() {
     }
   }
 
-  // Eye
+  // Eye (grouped so they stay together during scatter)
   const eyeX = bx + char.dir * bodyRx * 0.2;
   const eyeY = bodyY - bodyRy * 0.1;
-  dots.push({ x: eyeX, y: eyeY, r: R * 2.2, color: '#fff' });
-  dots.push({ x: eyeX, y: eyeY, r: R * 1.1, color: '#000' });
+  dots.push({ x: eyeX, y: eyeY, r: R * 2.2, color: '#fff', eye: 'white' });
+  dots.push({ x: eyeX, y: eyeY, r: R * 1.1, color: '#000', eye: 'pupil' });
 
   return dots;
 }
@@ -220,30 +238,42 @@ function update(time, dt) {
   // Scatter / Reassemble states
   if (char.state === STATE.SCATTER) {
     scatterTimer += dt;
-    // Update particle physics
-    for (const p of particles) {
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      // Pupil follows white eye
+      if (p.eye === 'pupil' && p.parentIdx >= 0) {
+        const parent = particles[p.parentIdx];
+        p.x = parent.x;
+        p.y = parent.y;
+        continue;
+      }
       if (!p.onGround) {
-        p.vy += 0.25;  // gravity
+        p.vy += 0.25;
         p.x += p.vx;
         p.y += p.vy;
-        p.rotation += p.rotSpeed;
         if (p.y >= base + p.r * 0.5) {
           p.y = base + p.r * 0.5;
-          p.vy = -p.vy * 0.2;  // small bounce
+          p.vy = -p.vy * 0.2;
           if (Math.abs(p.vy) < 1) {
             p.vy = 0;
             p.onGround = true;
           }
         }
       } else {
-        // Rolling on ground with friction
         p.vx *= 0.97;
         p.x += p.vx;
-        p.rotation += p.vx * 0.05;
       }
     }
-    // After scattering for a while, start reassembling
     if (scatterTimer > 2500) {
+      // Transition to reassemble: give each particle a staggered bounce-back
+      const targets = computeDotTargets();
+      for (let i = 0; i < particles.length && i < targets.length; i++) {
+        const p = particles[i];
+        // Random delay so they don't all bounce at once
+        p.reassembleDelay = Math.random() * 800;
+        p.reassemblePhase = 0;
+        p.onGround = false;
+      }
       char.state = STATE.REASSEMBLE;
       char.stateTimer = 0;
       scatterTimer = 0;
@@ -253,25 +283,78 @@ function update(time, dt) {
 
   if (char.state === STATE.REASSEMBLE) {
     scatterTimer += dt;
-    // Compute current targets
     const targets = computeDotTargets();
-    // Lerp particles back to targets
-    const progress = Math.min(1, scatterTimer / 1500);  // 1.5s to reassemble
-    const ease = progress * progress * (3 - 2 * progress);  // smoothstep
+    let allDone = true;
 
     for (let i = 0; i < particles.length && i < targets.length; i++) {
+      const p = particles[i];
       const t = targets[i];
-      particles[i].x += (t.x - particles[i].x) * ease * 0.08;
-      particles[i].y += (t.y - particles[i].y) * ease * 0.08;
-      particles[i].r += (t.r - particles[i].r) * 0.1;
-      particles[i].color = t.color;
-      particles[i].vx *= 0.9;
-      particles[i].vy *= 0.9;
-      particles[i].rotation *= 0.95;
+
+      // Pupil follows white eye during reassembly too
+      if (p.eye === 'pupil' && p.parentIdx >= 0) {
+        const parent = particles[p.parentIdx];
+        p.x = parent.x;
+        p.y = parent.y;
+        p.color = t.color;
+        p.r += (t.r - p.r) * 0.15;
+        continue;
+      }
+
+      p.reassembleDelay -= dt;
+      if (p.reassembleDelay > 0) {
+        // Still waiting, keep rolling
+        p.vx *= 0.98;
+        p.x += p.vx;
+        allDone = false;
+        continue;
+      }
+
+      if (p.reassemblePhase === 0) {
+        // Launch toward target with an arc
+        const dx = t.x - p.x;
+        const dy = t.y - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const speed = Math.max(3, dist * 0.04);
+        p.bounceVx = (dx / dist) * speed;
+        p.bounceVy = -Math.abs(dy) * 0.03 - 4 - Math.random() * 3;  // arc upward
+        p.reassemblePhase = 1;
+      }
+
+      // Bounce toward target with gravity
+      p.bounceVy += 0.3;
+      p.x += p.bounceVx;
+      p.y += p.bounceVy;
+
+      // Check if close to target
+      const dx2 = t.x - p.x;
+      const dy2 = t.y - p.y;
+      const d2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+
+      if (d2 < 3) {
+        // Snap to target
+        p.x = t.x;
+        p.y = t.y;
+        p.bounceVx = 0;
+        p.bounceVy = 0;
+        p.reassemblePhase = 2;  // done
+      } else if (p.y > t.y && p.reassemblePhase === 1) {
+        // Overshoot below target → bounce up toward it
+        p.y = t.y;
+        p.bounceVy = -Math.abs(p.bounceVy) * 0.4;
+        p.bounceVx = dx2 * 0.1;
+        if (Math.abs(p.bounceVy) < 0.5) {
+          p.x = t.x; p.y = t.y;
+          p.bounceVx = 0; p.bounceVy = 0;
+          p.reassemblePhase = 2;
+        }
+      }
+
+      p.color = t.color;
+      p.r += (t.r - p.r) * 0.15;
+      if (p.reassemblePhase < 2) allDone = false;
     }
 
-    // Check if all particles are close enough
-    if (scatterTimer > 1800) {
+    if (allDone || scatterTimer > 3000) {
       char.state = STATE.IDLE;
       char.stateTimer = 0;
       char.nextActionTime = time + 1000 + Math.random() * 2000;
