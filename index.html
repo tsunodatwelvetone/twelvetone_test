@@ -24,7 +24,7 @@ resize();
 window.addEventListener('resize', resize);
 
 // ─── Character State ───
-const STATE = { IDLE: 0, WALK: 1, JUMP_PREP: 2, JUMP: 3, LANDING: 4 };
+const STATE = { IDLE: 0, WALK: 1, JUMP_PREP: 2, JUMP: 3, LANDING: 4, SCATTER: 5, REASSEMBLE: 6 };
 
 const char = {
   x: 0, y: 0, baseY: 0,
@@ -35,12 +35,16 @@ const char = {
   legPhase: 0,
   dir: 1,
   nextActionTime: 0,
-  crouch: 0,     // knee-bend amount (positive = crouching)
-  crouchV: 0,    // crouch velocity (spring)
-  walkBlend: 0,  // smooth walk transition
-  jellyV: 0,     // jelly vertical velocity for body deformation
-  jellyD: 0,     // jelly deformation amount
+  crouch: 0,
+  crouchV: 0,
+  walkBlend: 0,
+  jellyV: 0,
+  jellyD: 0,
 };
+
+// ─── Particle System ───
+let particles = [];
+let scatterTimer = 0;
 
 function initChar() {
   char.x = canvas.width / 2;
@@ -55,13 +59,18 @@ function groundY() {
 
 // ─── AI / Behavior ───
 function pickNextAction(time) {
+  if (char.state === STATE.SCATTER || char.state === STATE.REASSEMBLE) return;
+
   const r = Math.random();
-  if (r < 0.35) {
+  if (r < 0.12) {
+    // Scatter!
+    startScatter(time);
+  } else if (r < 0.42) {
     char.state = STATE.IDLE;
     char.stateTimer = 0;
     char.nextActionTime = time + 2000 + Math.random() * 3000;
     char.vx = 0;
-  } else if (r < 0.75) {
+  } else if (r < 0.72) {
     char.state = STATE.WALK;
     char.stateTimer = 0;
     char.dir = Math.random() < 0.5 ? -1 : 1;
@@ -73,16 +82,205 @@ function pickNextAction(time) {
     char.crouch = 0;
     char.crouchV = 0;
     char.vx *= 0.3;
-    char.nextActionTime = time + 3000;  // will be overridden by jump launch
+    char.nextActionTime = time + 3000;
   }
+}
+
+function startScatter(time) {
+  // Compute current dot targets so we know how many particles
+  const targets = computeDotTargets();
+  particles = targets.map(t => ({
+    // Current position = target position at scatter start
+    x: t.x, y: t.y, r: t.r, color: t.color,
+    // Velocities: burst outward + some upward
+    vx: (Math.random() - 0.5) * 8 + (t.x - char.x) * 0.08,
+    vy: -(2 + Math.random() * 5),
+    // Target to return to (relative to char position at reassemble time)
+    tx: t.x - char.x, ty: t.y - char.y,
+    onGround: false,
+    rotation: 0,
+    rotSpeed: (Math.random() - 0.5) * 0.3,
+  }));
+  char.state = STATE.SCATTER;
+  char.stateTimer = 0;
+  char.vx = 0;
+  scatterTimer = 0;
+}
+
+// ─── Compute dot target positions (extracted from draw logic) ───
+function computeDotTargets() {
+  const R = 7;
+  const BR = 14;
+  const ORANGE = '#f07820';
+  const L = 11;
+  const dots = [];
+
+  const bx = char.x;
+  const ground = char.y;
+  const wb = char.walkBlend;
+
+  const squashAmt = char.crouch * 0.006 + char.jellyD * 0.008;
+  const bodyRx = 44 * (1 + squashAmt);
+  const bodyRy = 34 * (1 - squashAmt * 0.7);
+  const standH = L * 1.96;
+  const walkBob = wb * Math.cos(char.legPhase * 2) * 3.5;
+  const crouchOffset = Math.max(0, char.crouch);
+  const hipY = ground - standH + crouchOffset + walkBob;
+  const bodyY = hipY - bodyRy + 5;
+
+  const hipSpacing = 9;
+  const stanceLen = 9;
+
+  // Legs
+  for (let side = -1; side <= 1; side += 2) {
+    const hx = bx + side * hipSpacing;
+    const hy = hipY;
+    let fx, fy;
+    const restSpacing = stanceLen * 0.7;
+
+    if (char.state === STATE.JUMP_PREP) {
+      fx = hx + side * restSpacing; fy = ground;
+    } else if (char.state === STATE.JUMP) {
+      const stretch = 1.0 + 0.25 * Math.max(0, -char.vy / 10);
+      fx = hx + side * restSpacing; fy = hy + L * 2.1 * stretch;
+    } else if (char.state === STATE.LANDING) {
+      fx = hx + side * restSpacing; fy = ground;
+    } else if (wb < 0.01) {
+      fx = hx + side * restSpacing; fy = ground;
+    } else {
+      const phase = char.legPhase + (side === 1 ? Math.PI : 0);
+      const p = ((phase % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      if (p < Math.PI) {
+        const t = p / Math.PI;
+        fx = hx + (-stanceLen + t * 2 * stanceLen) * wb * char.dir;
+        fy = ground - Math.sin(t * Math.PI) * 7 * wb;
+      } else {
+        const t = (p - Math.PI) / Math.PI;
+        fx = hx + (stanceLen - t * 2 * stanceLen) * wb * char.dir;
+        fy = ground;
+      }
+    }
+
+    const dx = fx - hx, dy = fy - hy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const d = Math.min(dist, L * 2 - 0.1);
+    let kx, ky;
+    if (char.state === STATE.JUMP) {
+      kx = (hx + fx) / 2; ky = (hy + fy) / 2;
+    } else if (wb < 0.01 && char.state === STATE.IDLE) {
+      kx = (hx + fx) / 2; ky = (hy + fy) / 2;
+    } else if (d < 1) {
+      kx = hx + side * L * 0.7; ky = hy + L * 0.7;
+    } else {
+      const cosA = Math.max(-1, Math.min(1, d / (2 * L)));
+      const a = Math.acos(cosA);
+      const baseAng = Math.atan2(dy, dx);
+      const kneeAng = baseAng - side * a;
+      kx = hx + Math.cos(kneeAng) * L; ky = hy + Math.sin(kneeAng) * L;
+    }
+    dots.push({ x: hx, y: hy, r: R, color: ORANGE });
+    dots.push({ x: kx, y: ky, r: R, color: ORANGE });
+    dots.push({ x: fx, y: fy, r: R, color: ORANGE });
+  }
+
+  // Body
+  const ringGap = BR * 1.0;
+  const numRings = Math.ceil(Math.min(bodyRx, bodyRy) / ringGap);
+  for (let i = numRings; i >= 0; i--) {
+    const scale = i / numRings;
+    const rx = bodyRx * scale;
+    const ry = bodyRy * scale;
+    if (rx < 1 && ry < 1) {
+      dots.push({ x: bx, y: bodyY, r: BR, color: ORANGE });
+    } else {
+      const circ = 2 * Math.PI * Math.max(rx, ry);
+      const n = Math.max(1, Math.round(circ / (BR * 1.5)));
+      const angOff = (i % 2 === 0) ? 0 : Math.PI / n;
+      for (let j = 0; j < n; j++) {
+        const a = (Math.PI * 2 * j) / n + angOff;
+        dots.push({ x: bx + Math.cos(a) * rx, y: bodyY + Math.sin(a) * ry, r: BR, color: ORANGE });
+      }
+    }
+  }
+
+  // Eye
+  const eyeX = bx + char.dir * bodyRx * 0.2;
+  const eyeY = bodyY - bodyRy * 0.1;
+  dots.push({ x: eyeX, y: eyeY, r: R * 2.2, color: '#fff' });
+  dots.push({ x: eyeX, y: eyeY, r: R * 1.1, color: '#000' });
+
+  return dots;
 }
 
 // ─── Update ───
 function update(time, dt) {
-  if (time > char.nextActionTime) pickNextAction(time);
-
   const base = groundY();
   char.baseY = base;
+
+  // Scatter / Reassemble states
+  if (char.state === STATE.SCATTER) {
+    scatterTimer += dt;
+    // Update particle physics
+    for (const p of particles) {
+      if (!p.onGround) {
+        p.vy += 0.25;  // gravity
+        p.x += p.vx;
+        p.y += p.vy;
+        p.rotation += p.rotSpeed;
+        if (p.y >= base + p.r * 0.5) {
+          p.y = base + p.r * 0.5;
+          p.vy = -p.vy * 0.2;  // small bounce
+          if (Math.abs(p.vy) < 1) {
+            p.vy = 0;
+            p.onGround = true;
+          }
+        }
+      } else {
+        // Rolling on ground with friction
+        p.vx *= 0.97;
+        p.x += p.vx;
+        p.rotation += p.vx * 0.05;
+      }
+    }
+    // After scattering for a while, start reassembling
+    if (scatterTimer > 2500) {
+      char.state = STATE.REASSEMBLE;
+      char.stateTimer = 0;
+      scatterTimer = 0;
+    }
+    return;
+  }
+
+  if (char.state === STATE.REASSEMBLE) {
+    scatterTimer += dt;
+    // Compute current targets
+    const targets = computeDotTargets();
+    // Lerp particles back to targets
+    const progress = Math.min(1, scatterTimer / 1500);  // 1.5s to reassemble
+    const ease = progress * progress * (3 - 2 * progress);  // smoothstep
+
+    for (let i = 0; i < particles.length && i < targets.length; i++) {
+      const t = targets[i];
+      particles[i].x += (t.x - particles[i].x) * ease * 0.08;
+      particles[i].y += (t.y - particles[i].y) * ease * 0.08;
+      particles[i].r += (t.r - particles[i].r) * 0.1;
+      particles[i].color = t.color;
+      particles[i].vx *= 0.9;
+      particles[i].vy *= 0.9;
+      particles[i].rotation *= 0.95;
+    }
+
+    // Check if all particles are close enough
+    if (scatterTimer > 1800) {
+      char.state = STATE.IDLE;
+      char.stateTimer = 0;
+      char.nextActionTime = time + 1000 + Math.random() * 2000;
+      particles = [];
+    }
+    return;
+  }
+
+  if (time > char.nextActionTime) pickNextAction(time);
 
   // Eye blink
   char.eyeBlinkTimer -= dt;
@@ -95,13 +293,12 @@ function update(time, dt) {
   switch (char.state) {
     case STATE.IDLE:
       char.vx *= 0.9;
-      char.legPhase = 0;  // reset leg phase so legs are straight
+      char.legPhase = 0;
       break;
     case STATE.WALK:
       char.legPhase += dt * 0.01 * Math.abs(char.vx);
       break;
     case STATE.JUMP_PREP:
-      // Squat down over ~300ms then launch
       char.crouch += (12 - char.crouch) * 0.12;
       char.vx *= 0.95;
       if (char.stateTimer > 300) {
@@ -109,38 +306,36 @@ function update(time, dt) {
         char.stateTimer = 0;
         char.vy = -(8 + Math.random() * 3);
         char.vx = (Math.random() - 0.5) * 2.5;
-        char.crouch = -6;  // negative = stretch on launch
+        char.crouch = -6;
         char.crouchV = -3;
       }
       break;
     case STATE.JUMP:
       char.vy += 0.32;
       char.y += char.vy;
-      // Slowly relax crouch toward 0 in air (legs extended)
       char.crouch += (0 - char.crouch) * 0.08;
       if (char.y >= base) {
         char.y = base;
         const impactV = char.vy;
         char.vy = 0;
         char.crouch = 0;
-        char.crouchV = impactV * 1.2;  // landing impact proportional to fall speed
-        char.jellyV = impactV * 0.8;   // jelly squash on landing
+        char.crouchV = impactV * 1.2;
+        char.jellyV = impactV * 0.8;
         char.state = STATE.LANDING;
         char.stateTimer = 0;
       }
       break;
     case STATE.LANDING:
-      // Stay in landing until crouch spring settles
       if (char.stateTimer > 300 && Math.abs(char.crouch) < 2 && Math.abs(char.crouchV) < 2) {
         char.state = STATE.IDLE;
-        char.crouch = 0; char.crouchV = 0;  // snap legs straight immediately
+        char.crouch = 0; char.crouchV = 0;
         char.nextActionTime = time + 500 + Math.random() * 1500;
       }
       char.vx *= 0.92;
       break;
   }
 
-  // Crouch spring (used by jump prep, landing, walk bob)
+  // Crouch spring
   if (char.state !== STATE.JUMP_PREP) {
     char.crouchV -= char.crouch * 0.2;
     char.crouchV *= 0.82;
@@ -156,7 +351,7 @@ function update(time, dt) {
     char.jellyV += bobAccel;
   }
 
-  // Jelly spring (body deformation)
+  // Jelly spring
   char.jellyV -= char.jellyD * 0.25;
   char.jellyV *= 0.78;
   char.jellyD += char.jellyV;
@@ -164,26 +359,21 @@ function update(time, dt) {
     char.jellyD = 0; char.jellyV = 0;
   }
 
-  // Walk blend (smooth in, snap out)
+  // Walk blend
   if (char.state === STATE.WALK) {
     char.walkBlend += (1 - char.walkBlend) * 0.08;
   } else {
-    char.walkBlend = 0;  // snap legs straight immediately on stop
+    char.walkBlend = 0;
   }
 
   char.x += char.vx;
-  const margin = 50; // body radius + padding
+  const margin = 50;
   if (char.x < margin) {
-    char.x = margin;
-    char.vx = Math.abs(char.vx);
-    char.dir = 1;
+    char.x = margin; char.vx = Math.abs(char.vx); char.dir = 1;
   } else if (char.x > canvas.width - margin) {
-    char.x = canvas.width - margin;
-    char.vx = -Math.abs(char.vx);
-    char.dir = -1;
+    char.x = canvas.width - margin; char.vx = -Math.abs(char.vx); char.dir = -1;
   }
   if (char.state !== STATE.JUMP) char.y = base;
-  // Prevent drifting during landing
   if (char.state === STATE.LANDING) char.vx *= 0.95;
 
   char.stateTimer += dt;
@@ -200,141 +390,18 @@ function dot(x, y, r, color) {
 function draw(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const R = 7;            // leg dot radius
-  const BR = 14;          // body dot radius (big bold dots)
-  const ORANGE = '#f07820';
-  const L = 11;           // short leg segments (cute game proportions)
-
-  const bx = char.x;
-  const ground = char.y;
-  const wb = char.walkBlend;
-
-  // Body ellipse with jelly deformation
-  // Positive squash = wider+shorter, negative = taller+narrower
-  const squashAmt = char.crouch * 0.006 + char.jellyD * 0.008;
-  const bodyRx = 44 * (1 + squashAmt);
-  const bodyRy = 34 * (1 - squashAmt * 0.7);
-
-  // Standing leg height
-  const standH = L * 1.96;
-
-  // Walk bob: body drops at contact, rises at mid-stance (bigger amplitude)
-  const walkBob = wb * Math.cos(char.legPhase * 2) * 3.5;
-
-  const crouchOffset = Math.max(0, char.crouch);
-  const hipY = ground - standH + crouchOffset + walkBob;
-  const bodyY = hipY - bodyRy + 5;
-
-  // ─── Legs (3 dots each, 2-bone IK, knees always outward) ───
-  const hipSpacing = 9;
-  const stanceLen = 9;
-
-  for (let side = -1; side <= 1; side += 2) {
-    const hx = bx + side * hipSpacing;
-    const hy = hipY;
-    let fx, fy;
-
-    const restSpacing = stanceLen * 0.7;
-    if (char.state === STATE.JUMP_PREP) {
-      // Crouching: feet on ground, knees bent outward
-      fx = hx + side * restSpacing;
-      fy = ground;
-    } else if (char.state === STATE.JUMP) {
-      // Airborne: legs stretched straight down, extended longer
-      const stretch = 1.0 + 0.25 * Math.max(0, -char.vy / 10);
-      fx = hx + side * restSpacing;
-      fy = hy + L * 2.1 * stretch;
-    } else if (char.state === STATE.LANDING) {
-      // Landing: feet on ground, knees bent for absorption
-      fx = hx + side * restSpacing;
-      fy = ground;
-    } else if (wb < 0.01) {
-      // Idle: legs straight down
-      fx = hx + side * restSpacing;
-      fy = ground;
-    } else {
-      // Walk: swing/stance phases, stride follows travel direction
-      const phase = char.legPhase + (side === 1 ? Math.PI : 0);
-      const p = ((phase % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-
-      if (p < Math.PI) {
-        // Swing: foot arcs forward (in char.dir direction)
-        const t = p / Math.PI;
-        fx = hx + (-stanceLen + t * 2 * stanceLen) * wb * char.dir;
-        fy = ground - Math.sin(t * Math.PI) * 7 * wb;
-      } else {
-        // Stance: foot on ground, pushes backward
-        const t = (p - Math.PI) / Math.PI;
-        fx = hx + (stanceLen - t * 2 * stanceLen) * wb * char.dir;
-        fy = ground;
-      }
+  // If scattering or reassembling, draw particles
+  if (char.state === STATE.SCATTER || char.state === STATE.REASSEMBLE) {
+    for (const p of particles) {
+      dot(p.x, p.y, p.r, p.color);
     }
-
-    // 2-bone IK — knees ALWAYS bend outward (side determines direction)
-    const dx = fx - hx, dy = fy - hy;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const d = Math.min(dist, L * 2 - 0.1);
-
-    let kx, ky;
-    if (char.state === STATE.JUMP) {
-      // Airborne: legs straight, knee is midpoint
-      kx = (hx + fx) / 2;
-      ky = (hy + fy) / 2;
-    } else if (wb < 0.01 && char.state === STATE.IDLE) {
-      // Idle: perfectly straight legs — knee is midpoint
-      kx = (hx + fx) / 2;
-      ky = (hy + fy) / 2;
-    } else if (d < 1) {
-      kx = hx + side * L * 0.7;
-      ky = hy + L * 0.7;
-    } else {
-      const cosA = Math.max(-1, Math.min(1, d / (2 * L)));
-      const a = Math.acos(cosA);
-      const baseAng = Math.atan2(dy, dx);
-      // side: right leg bends right, left leg bends left (outward)
-      const kneeAng = baseAng - side * a;
-      kx = hx + Math.cos(kneeAng) * L;
-      ky = hy + Math.sin(kneeAng) * L;
-    }
-
-    dot(hx, hy, R, ORANGE);
-    dot(kx, ky, R, ORANGE);
-    dot(fx, fy, R, ORANGE);
+    return;
   }
 
-  // ─── Body (concentric elliptical rings — perfectly round outline) ───
-  const ringGap = BR * 1.0;
-  const numRings = Math.ceil(Math.min(bodyRx, bodyRy) / ringGap);
-
-  for (let i = numRings; i >= 0; i--) {
-    const scale = i / numRings;
-    const rx = bodyRx * scale;
-    const ry = bodyRy * scale;
-
-    if (rx < 1 && ry < 1) {
-      dot(bx, bodyY, BR, ORANGE);
-    } else {
-      const circ = 2 * Math.PI * Math.max(rx, ry);
-      const n = Math.max(1, Math.round(circ / (BR * 1.5)));
-      const angOff = (i % 2 === 0) ? 0 : Math.PI / n;
-      for (let j = 0; j < n; j++) {
-        const a = (Math.PI * 2 * j) / n + angOff;
-        dot(bx + Math.cos(a) * rx, bodyY + Math.sin(a) * ry, BR, ORANGE);
-      }
-    }
-  }
-
-  // ─── Eye (upper-front of body) ───
-  const eyeX = bx + char.dir * bodyRx * 0.2;
-  const eyeY = bodyY - bodyRy * 0.1;
-
-  if (char.eyeBlink) {
-    dot(eyeX, eyeY, R * 0.7, '#fff');
-  } else {
-    dot(eyeX, eyeY, R * 2.2, '#fff');    // big white
-    const px = char.vx * 0.5;
-    const py = char.state === STATE.JUMP ? -1 : 0;
-    dot(eyeX + px, eyeY + py, R * 1.1, '#000'); // pupil
+  // Normal drawing
+  const targets = computeDotTargets();
+  for (const t of targets) {
+    dot(t.x, t.y, t.r, t.color);
   }
 }
 
