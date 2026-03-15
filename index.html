@@ -141,7 +141,8 @@ function dot(x, y, r, color) {
 function draw(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const R = 7;            // smaller dots → many more → very round body
+  const R = 7;            // leg dot radius
+  const BR = 10;          // body dot radius (larger for fewer, bolder dots)
   const ORANGE = '#f07820';
   const L = 11;           // short leg segments (cute game proportions)
 
@@ -204,7 +205,11 @@ function draw(time) {
     const d = Math.min(dist, L * 2 - 0.1);
 
     let kx, ky;
-    if (d < 1) {
+    if (wb < 0.01 && char.state !== STATE.JUMP) {
+      // Idle: perfectly straight legs — knee is midpoint
+      kx = (hx + fx) / 2;
+      ky = (hy + fy) / 2;
+    } else if (d < 1) {
       kx = hx + side * L * 0.7;
       ky = hy + L * 0.7;
     } else {
@@ -223,7 +228,7 @@ function draw(time) {
   }
 
   // ─── Body (concentric elliptical rings — perfectly round outline) ───
-  const ringGap = R * 0.85;
+  const ringGap = BR * 0.85;
   const numRings = Math.ceil(Math.min(bodyRx, bodyRy) / ringGap);
 
   for (let i = numRings; i >= 0; i--) {
@@ -232,14 +237,14 @@ function draw(time) {
     const ry = bodyRy * scale;
 
     if (rx < 1 && ry < 1) {
-      dot(bx, bodyY, R, ORANGE);
+      dot(bx, bodyY, BR, ORANGE);
     } else {
       const circ = 2 * Math.PI * Math.max(rx, ry);
-      const n = Math.max(1, Math.round(circ / (R * 1.3)));
+      const n = Math.max(1, Math.round(circ / (BR * 1.3)));
       const angOff = (i % 2 === 0) ? 0 : Math.PI / n;
       for (let j = 0; j < n; j++) {
         const a = (Math.PI * 2 * j) / n + angOff;
-        dot(bx + Math.cos(a) * rx, bodyY + Math.sin(a) * ry, R, ORANGE);
+        dot(bx + Math.cos(a) * rx, bodyY + Math.sin(a) * ry, BR, ORANGE);
       }
     }
   }
