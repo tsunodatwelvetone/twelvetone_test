@@ -27,23 +27,17 @@ window.addEventListener('resize', resize);
 const STATE = { IDLE: 0, WALK: 1, JUMP: 2 };
 
 const char = {
-  x: 0,
-  y: 0,
-  baseY: 0,
-  vx: 0,
-  vy: 0,
+  x: 0, y: 0, baseY: 0,
+  vx: 0, vy: 0,
   state: STATE.IDLE,
   stateTimer: 0,
-  bodyW: 65,
-  bodyH: 50,
-  squish: 0,
-  squishV: 0,
-  eyeBlink: 0,
-  eyeBlinkTimer: 0,
+  eyeBlink: 0, eyeBlinkTimer: 0,
   legPhase: 0,
   dir: 1,
   nextActionTime: 0,
-  legLift: 0,
+  crouch: 0,     // landing knee-bend amount
+  crouchV: 0,    // crouch velocity (spring)
+  walkBlend: 0,  // smooth walk transition
 };
 
 function initChar() {
@@ -82,9 +76,7 @@ function pickNextAction(time) {
 
 // ─── Update ───
 function update(time, dt) {
-  if (time > char.nextActionTime) {
-    pickNextAction(time);
-  }
+  if (time > char.nextActionTime) pickNextAction(time);
 
   const base = groundY();
   char.baseY = base;
@@ -97,52 +89,42 @@ function update(time, dt) {
     setTimeout(() => { char.eyeBlink = 0; }, 120);
   }
 
-  // Physics
   switch (char.state) {
     case STATE.IDLE:
       char.vx *= 0.9;
-      char.squish = Math.sin(time * 0.003) * 0.03;
       break;
-
     case STATE.WALK:
-      char.legPhase += dt * 0.008 * Math.abs(char.vx);
-      char.squish = Math.sin(char.legPhase * 2) * 0.02;
+      char.legPhase += dt * 0.005 * Math.abs(char.vx);
       break;
-
     case STATE.JUMP:
       char.vy += 0.32;
       char.y += char.vy;
-      char.squish = Math.sin(time * 0.015) * 0.1 + (char.vy < 0 ? -0.06 : 0.06);
       if (char.y >= base) {
         char.y = base;
         char.vy = 0;
-        char.squishV = 0.3;
+        char.crouchV = 12;  // landing impact → knees absorb
         char.state = STATE.IDLE;
         char.nextActionTime = time + 800 + Math.random() * 1500;
       }
       break;
   }
 
-  // Squish spring
-  char.squishV *= 0.9;
-  char.squish += char.squishV;
-  char.squishV -= char.squish * 0.12;
-
-  // Move
-  char.x += char.vx;
-
-  // Wrap around screen
-  if (char.x < -80) char.x = canvas.width + 80;
-  if (char.x > canvas.width + 80) char.x = -80;
-
-  // Keep on ground
-  if (char.state !== STATE.JUMP) {
-    char.y = base;
+  // Crouch spring (landing knee absorption)
+  char.crouchV -= char.crouch * 0.2;
+  char.crouchV *= 0.82;
+  char.crouch += char.crouchV;
+  if (Math.abs(char.crouch) < 0.3 && Math.abs(char.crouchV) < 0.3) {
+    char.crouch = 0; char.crouchV = 0;
   }
 
-  // Leg lift
-  let legLiftTarget = (char.state === STATE.WALK) ? 18 : 0;
-  char.legLift += (legLiftTarget - char.legLift) * 0.08;
+  // Walk blend (smooth in/out)
+  const wTarget = char.state === STATE.WALK ? 1 : 0;
+  char.walkBlend += (wTarget - char.walkBlend) * 0.08;
+
+  char.x += char.vx;
+  if (char.x < -100) char.x = canvas.width + 100;
+  if (char.x > canvas.width + 100) char.x = -100;
+  if (char.state !== STATE.JUMP) char.y = base;
 
   char.stateTimer += dt;
 }
@@ -158,60 +140,94 @@ function dot(x, y, r, color) {
 function draw(time) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const sq = char.squish;
-  const sw = char.bodyW * (1 + sq * 0.5);
-  const sh = char.bodyH * (1 - sq);
-
-  const R = 10;  // uniform dot size for ALL dots (except eye white)
+  const R = 13;          // uniform dot radius (body & legs)
   const ORANGE = '#f07820';
+  const L = 20;          // leg segment length (hip→knee, knee→foot)
 
   const bx = char.x;
-  // Body center is lifted up so legs hang below
-  const by = char.y - (char.legLift || 0) - 35;
+  const ground = char.y;
+  const crouch = Math.max(0, char.crouch);
 
-  // ─── Legs first (behind body): 3 dots per leg ───
-  const legSpacing = 10;
-  const legStep = R * 1.5;
-  const legTop = by + sh * 0.55;  // starts at body bottom area
+  // Body ellipse (1.3:1 ratio)
+  const bodyRx = 50;
+  const bodyRy = 38;
+
+  // Hip sits near body bottom; legs hang below
+  const standH = L * 1.9;
+  const hipY = ground - standH + crouch;
+  const bodyY = hipY - bodyRy + 8;
+
+  // ─── Legs (3 dots each, 2-bone IK with knee) ───
+  const hipSpacing = 12;
+  const wb = char.walkBlend;
 
   for (let side = -1; side <= 1; side += 2) {
-    const lx = bx + side * legSpacing;
-    let fxOff = 0, kickUp = 0;
-    if (char.state === STATE.WALK) {
+    const hx = bx + side * hipSpacing;
+    const hy = hipY;
+    let fx, fy;
+
+    if (char.state === STATE.JUMP) {
+      fx = hx + char.vx * 1.5;
+      fy = hy + L * 1.85;
+    } else {
       const phase = char.legPhase + (side === 1 ? Math.PI : 0);
-      fxOff = Math.sin(phase) * 5;
-      kickUp = Math.abs(Math.sin(phase)) * 5;
+      const stride = Math.sin(phase) * 15 * wb;
+      const lift = Math.max(0, Math.sin(phase)) * 12 * wb;
+      fx = hx + stride;
+      fy = ground - lift;
     }
-    dot(lx, legTop + legStep, R, ORANGE);
-    dot(lx + fxOff * 0.5, legTop + legStep * 2, R, ORANGE);
-    dot(lx + fxOff, legTop + legStep * 3 - kickUp, R, ORANGE);
+
+    // 2-bone IK
+    const dx = fx - hx, dy = fy - hy;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const d = Math.min(dist, L * 2 - 0.1);
+
+    let kx, ky;
+    if (d < 1) {
+      kx = hx + side * L * 0.5;
+      ky = hy + L * 0.87;
+    } else {
+      const cosA = Math.max(-1, Math.min(1, d / (2 * L)));
+      const a = Math.acos(cosA);
+      const baseAng = Math.atan2(dy, dx);
+      const bendDir = wb > 0.5 ? char.dir : -side;
+      const kneeAng = baseAng - bendDir * a;
+      kx = hx + Math.cos(kneeAng) * L;
+      ky = hy + Math.sin(kneeAng) * L;
+    }
+
+    dot(hx, hy, R, ORANGE);
+    dot(kx, ky, R, ORANGE);
+    dot(fx, fy, R, ORANGE);
   }
 
-  // ─── Body: filled oval (1.3:1 ratio) ───
-  // Outer ring (12 dots)
-  for (let i = 0; i < 12; i++) {
-    const a = (Math.PI * 2 * i) / 12;
-    dot(bx + Math.cos(a) * sw * 0.6, by + Math.sin(a) * sh * 0.5, R, ORANGE);
-  }
-  // Inner ring (6 dots)
-  for (let i = 0; i < 6; i++) {
-    const a = (Math.PI * 2 * i) / 6 + 0.5;
-    dot(bx + Math.cos(a) * sw * 0.26, by + Math.sin(a) * sh * 0.22, R, ORANGE);
-  }
-  // Center (1 dot)
-  dot(bx, by, R, ORANGE);
+  // ─── Body (hex-packed ellipse, opaque, drawn OVER leg tops) ───
+  const step = R * 1.2;
+  const maxRow = Math.ceil(bodyRy / step);
+  const maxCol = Math.ceil(bodyRx / step);
 
-  // ─── Eye: 1 large white dot + 1 standard black dot ───
-  const eyeX = bx + char.dir * 2;
-  const eyeY = by;
+  for (let row = -maxRow; row <= maxRow; row++) {
+    const cy = row * step;
+    const xOff = (Math.abs(row) % 2 === 1) ? step / 2 : 0;
+    for (let col = -maxCol; col <= maxCol; col++) {
+      const cx = col * step + xOff;
+      if ((cx * cx) / (bodyRx * bodyRx) + (cy * cy) / (bodyRy * bodyRy) <= 1) {
+        dot(bx + cx, bodyY + cy, R, ORANGE);
+      }
+    }
+  }
+
+  // ─── Eye ───
+  const eyeX = bx + char.dir * 3;
+  const eyeY = bodyY;
 
   if (char.eyeBlink) {
-    dot(eyeX, eyeY, R, '#fff');
+    dot(eyeX, eyeY, R * 0.5, '#fff');
   } else {
-    dot(eyeX, eyeY, R * 1.5, '#fff');
-    const px = char.vx * 1.0;
+    dot(eyeX, eyeY, R * 1.5, '#fff');    // white (large)
+    const px = char.vx * 0.8;
     const py = char.state === STATE.JUMP ? -1 : 0;
-    dot(eyeX + px, eyeY + py, R, '#000');
+    dot(eyeX + px, eyeY + py, R * 0.6, '#000'); // pupil (small)
   }
 }
 
