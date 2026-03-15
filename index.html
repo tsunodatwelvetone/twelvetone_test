@@ -222,18 +222,24 @@ function draw(time) {
     dot(fx, fy, R, ORANGE);
   }
 
-  // ─── Body (tight hex-packed ellipse — very round, fully opaque) ───
-  const step = R;  // step = R for dense packing, smooth round edge
-  const maxRow = Math.ceil(bodyRy / step);
-  const maxCol = Math.ceil(bodyRx / step);
+  // ─── Body (concentric elliptical rings — perfectly round outline) ───
+  const ringGap = R * 0.85;
+  const numRings = Math.ceil(Math.min(bodyRx, bodyRy) / ringGap);
 
-  for (let row = -maxRow; row <= maxRow; row++) {
-    const cy = row * step;
-    const xOff = (row % 2 !== 0) ? step * 0.5 : 0;
-    for (let col = -maxCol; col <= maxCol; col++) {
-      const cx = col * step + xOff;
-      if ((cx * cx) / (bodyRx * bodyRx) + (cy * cy) / (bodyRy * bodyRy) <= 1) {
-        dot(bx + cx, bodyY + cy, R, ORANGE);
+  for (let i = numRings; i >= 0; i--) {
+    const scale = i / numRings;
+    const rx = bodyRx * scale;
+    const ry = bodyRy * scale;
+
+    if (rx < 1 && ry < 1) {
+      dot(bx, bodyY, R, ORANGE);
+    } else {
+      const circ = 2 * Math.PI * Math.max(rx, ry);
+      const n = Math.max(1, Math.round(circ / (R * 1.3)));
+      const angOff = (i % 2 === 0) ? 0 : Math.PI / n;
+      for (let j = 0; j < n; j++) {
+        const a = (Math.PI * 2 * j) / n + angOff;
+        dot(bx + Math.cos(a) * rx, bodyY + Math.sin(a) * ry, R, ORANGE);
       }
     }
   }
