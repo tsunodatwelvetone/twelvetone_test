@@ -34,7 +34,7 @@ const char = {
   vy: 0,
   state: STATE.IDLE,
   stateTimer: 0,
-  bodyW: 60,
+  bodyW: 65,
   bodyH: 50,
   squish: 0,
   squishV: 0,
@@ -162,101 +162,112 @@ function draw(time) {
 
   const bx = char.x;
   const by = char.y - (char.legLift || 0);
-  const bw = char.bodyW;
-  const bh = char.bodyH;
+  const bw = char.bodyW;  // 65 (half-width)
+  const bh = char.bodyH;  // 50 (half-height) → ratio 1.3:1
   const sq = char.squish;
 
   const sw = bw * (1 + sq * 0.5);
   const sh = bh * (1 - sq);
 
   // === 48 dots total ===
-  let n = 0;
 
   // ─── Shadow: 3 dots ───
   const shadowScale = Math.max(0.3, 1 - (char.baseY - char.y) * 0.004);
-  const shadowA = 0.1 * shadowScale;
-  const sY = char.baseY + sh * 0.55;
-  dot(bx - 16 * shadowScale, sY, 10 * shadowScale, '#000', shadowA); n++;
-  dot(bx, sY, 12 * shadowScale, '#000', shadowA); n++;
-  dot(bx + 16 * shadowScale, sY, 10 * shadowScale, '#000', shadowA); n++;
+  const shadowA = 0.08 * shadowScale;
+  const sY = char.baseY + sh * 0.45;
+  dot(bx - 18 * shadowScale, sY, 14 * shadowScale, '#000', shadowA);
+  dot(bx, sY, 18 * shadowScale, '#000', shadowA);
+  dot(bx + 18 * shadowScale, sY, 14 * shadowScale, '#000', shadowA);
 
-  // ─── Legs: 6 dots (3 per leg) ───
+  // ─── Legs: 4 dots (2 per leg, short & close together) ───
+  // Leg spacing ~20% of body width, short length ~25% of body height
+  const legSpacing = sw * 0.2;
   for (let side = -1; side <= 1; side += 2) {
-    const legX = bx + side * 14;
-    const legTopY = by + sh * 0.3;
+    const legX = bx + side * legSpacing;
+    const legTopY = by + sh * 0.32;
     let fxOff = 0, kickUp = 0;
     if (char.state === STATE.WALK) {
       const phase = char.legPhase + (side === 1 ? Math.PI : 0);
-      fxOff = Math.sin(phase) * 7;
-      kickUp = Math.abs(Math.sin(phase)) * 6;
+      fxOff = Math.sin(phase) * 5;
+      kickUp = Math.abs(Math.sin(phase)) * 5;
     }
-    dot(legX, legTopY + 4, 5, '#e06515'); n++;
-    dot(legX + fxOff * 0.5, legTopY + 10 - kickUp * 0.5, 5, '#f07020'); n++;
-    dot(legX + fxOff, legTopY + 16 - kickUp, 5.5, '#f07a28'); n++;
+    dot(legX, legTopY + 5, 5, '#e86818');
+    dot(legX + fxOff, legTopY + 14 - kickUp, 5.5, '#f07020');
   }
 
-  // ─── Body: 26 dots (overlapping orange circles) ───
-  // Outer ring (12 dots)
-  for (let i = 0; i < 12; i++) {
-    const a = (Math.PI * 2 * i) / 12;
-    const rx = sw * 0.72;
-    const ry = sh * 0.62;
-    dot(bx + Math.cos(a) * rx, by + Math.sin(a) * ry, 22, '#f07820'); n++;
+  // ─── Body: 28 dots (overlapping orange circles, oval 1.3:1) ───
+  // Outer ring (14 dots) - defines the oval silhouette
+  for (let i = 0; i < 14; i++) {
+    const a = (Math.PI * 2 * i) / 14;
+    const rx = sw * 0.75;
+    const ry = sh * 0.65;
+    dot(bx + Math.cos(a) * rx, by + Math.sin(a) * ry, 24, '#f07820');
   }
-  // Mid ring (8 dots)
+  // Mid ring (8 dots) - fills interior
   for (let i = 0; i < 8; i++) {
-    const a = (Math.PI * 2 * i) / 8 + 0.2;
-    const rx = sw * 0.38;
-    const ry = sh * 0.35;
-    dot(bx + Math.cos(a) * rx, by + Math.sin(a) * ry, 20, '#f48030'); n++;
+    const a = (Math.PI * 2 * i) / 8 + 0.25;
+    const rx = sw * 0.35;
+    const ry = sh * 0.3;
+    dot(bx + Math.cos(a) * rx, by + Math.sin(a) * ry, 22, '#f48030');
   }
   // Center fill (4 dots)
-  dot(bx, by, 24, '#f58535'); n++;
-  dot(bx, by - sh * 0.15, 18, '#f88e40'); n++;
-  dot(bx - sw * 0.15, by + sh * 0.1, 16, '#f07520'); n++;
-  dot(bx + sw * 0.15, by + sh * 0.1, 16, '#f07520'); n++;
-  // Highlight (2 dots)
-  dot(bx - sw * 0.2, by - sh * 0.35, 12, '#ffa050', 0.6); n++;
-  dot(bx - sw * 0.12, by - sh * 0.45, 8, '#ffcc90', 0.4); n++;
+  dot(bx, by, 26, '#f58535');
+  dot(bx, by - sh * 0.18, 20, '#f88e40');
+  dot(bx - sw * 0.18, by + sh * 0.08, 18, '#f07520');
+  dot(bx + sw * 0.18, by + sh * 0.08, 18, '#f07520');
+  // Highlight - upper left glossy shine (2 dots)
+  dot(bx - sw * 0.25, by - sh * 0.38, 14, '#ffa050', 0.55);
+  dot(bx - sw * 0.15, by - sh * 0.48, 9, '#ffcc90', 0.35);
 
-  // ─── Eye: 8 dots ───
-  const eyeX = bx + char.dir * 6;
-  const eyeY = by - sh * 0.05;
+  // ─── Eye: 8 dots (large, ~35% of body width, centered on body) ───
+  const eyeX = bx + char.dir * 3;  // very slight offset
+  const eyeY = by - sh * 0.02;     // vertically centered
+  const eyeR = sw * 0.175;         // ~35% of body width diameter
 
   if (char.eyeBlink) {
-    // Blink: 2 dots as squished eye + 6 invisible (still count)
-    dot(eyeX - 4, eyeY, 5, '#fff'); n++;
-    dot(eyeX + 4, eyeY, 5, '#fff'); n++;
-    // Use remaining 6 eye dots as tiny hidden ones
-    for (let i = 0; i < 6; i++) { dot(eyeX, eyeY, 0.5, '#fff', 0); n++; }
+    // Blink: flat line using 2 dots
+    dot(eyeX - 5, eyeY, 4, '#fff');
+    dot(eyeX + 5, eyeY, 4, '#fff');
+    for (let i = 0; i < 6; i++) { dot(eyeX, eyeY, 0.1, '#fff', 0); }
   } else {
-    // Eye white (4 dots)
-    dot(eyeX, eyeY - 3, 11, '#fff'); n++;
-    dot(eyeX, eyeY + 3, 11, '#fff'); n++;
-    dot(eyeX - 4, eyeY, 9, '#fff'); n++;
-    dot(eyeX + 4, eyeY, 9, '#fff'); n++;
-    // Pupil (2 dots)
-    const px = char.vx * 1.5;
-    const py = char.state === STATE.JUMP ? -2 : 1;
-    dot(eyeX + px, eyeY + py, 6.5, '#111'); n++;
-    dot(eyeX + px, eyeY + py + 1, 5, '#222'); n++;
+    // Eye white (4 dots overlapping to make a circle)
+    dot(eyeX, eyeY - 3, eyeR, '#fff');
+    dot(eyeX, eyeY + 3, eyeR, '#fff');
+    dot(eyeX - 3, eyeY, eyeR * 0.85, '#fff');
+    dot(eyeX + 3, eyeY, eyeR * 0.85, '#fff');
+    // Pupil (2 dots) - centered with slight movement
+    const px = char.vx * 1.2;
+    const py = char.state === STATE.JUMP ? -2 : 0.5;
+    dot(eyeX + px, eyeY + py, 7, '#111');
+    dot(eyeX + px, eyeY + py + 0.5, 5.5, '#1a1a1a');
     // Shine (1 dot)
-    dot(eyeX + px + 3, eyeY + py - 3, 2.5, '#fff'); n++;
-    // Iris edge (1 dot)
-    dot(eyeX + px - 2, eyeY + py + 2, 3, '#333', 0.3); n++;
+    dot(eyeX + px + 3, eyeY + py - 3.5, 2.5, '#fff');
+    // Subtle iris edge (1 dot)
+    dot(eyeX + px - 1.5, eyeY + py + 2.5, 3, '#333', 0.25);
   }
 
-  // ─── Jump sparkles: 2 dots ───
+  // ─── Accent: 5 dots ───
   if (char.state === STATE.JUMP && char.vy < 0) {
-    dot(bx + (Math.random() - 0.5) * bw, by + bh * 0.5, 2 + Math.random() * 2, '#ffa040', 0.35); n++;
-    dot(bx + (Math.random() - 0.5) * bw, by + bh * 0.55, 1.5 + Math.random() * 2, '#ffb060', 0.3); n++;
+    // Jump sparkles
+    for (let i = 0; i < 5; i++) {
+      dot(
+        bx + (Math.random() - 0.5) * sw * 1.2,
+        by + sh * 0.4 + Math.random() * sh * 0.3,
+        1.5 + Math.random() * 2,
+        '#ffa040', 0.2 + Math.random() * 0.15
+      );
+    }
   } else {
-    // Idle/walk: 2 extra body accent dots
-    dot(bx + sw * 0.3, by - sh * 0.2, 8, '#e86818', 0.5); n++;
-    dot(bx - sw * 0.3, by + sh * 0.15, 8, '#e86818', 0.4); n++;
+    // Body shading accents - subtle depth
+    dot(bx + sw * 0.35, by + sh * 0.15, 10, '#e06515', 0.35);
+    dot(bx - sw * 0.35, by + sh * 0.2, 10, '#e06515', 0.3);
+    dot(bx, by + sh * 0.35, 12, '#e06515', 0.25);
+    // Top highlight accents
+    dot(bx + sw * 0.1, by - sh * 0.42, 7, '#ffb060', 0.3);
+    dot(bx - sw * 0.35, by - sh * 0.15, 8, '#ffa050', 0.2);
   }
 
-  // n should be exactly 48
+  // Total: 3 + 4 + 14 + 8 + 4 + 2 + 8 + 5 = 48
 }
 
 // ─── Main Loop ───
